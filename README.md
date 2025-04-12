@@ -1,1 +1,1 @@
-This folder contains the files used in MS242-2025 hands-on microbiome tutorial
+This folder contains files and scripts used in MS242-2025 hands-on microbiome tutorial
