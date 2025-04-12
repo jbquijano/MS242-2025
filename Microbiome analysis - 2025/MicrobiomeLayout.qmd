@@ -1,0 +1,17 @@
+---
+title: "Microbiome - 2025"
+format: html
+theme: 
+  light: zephyr
+  dark: cyborg
+toc: true
+page-layout: full
+number-sections: true
+number-depth: 3
+editor: visual
+self-contained: true
+---
+
+# Brief intro to R
+
+-   Everything in R is an object

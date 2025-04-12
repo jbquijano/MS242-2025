@@ -1,0 +1,370 @@
+---
+title: "Microbiome - 2025 - Tutor"
+format: html
+theme: 
+  light: zephyr
+  dark: cyborg
+toc: true
+page-layout: full
+number-sections: true
+number-depth: 3
+editor: visual
+self-contained: true
+---
+
+# Brief intro to R
+
+In R, we use functions to process or data.
+
+You can create your own function or use ready-made functions (we typically use the latter).
+
+In Algebra:
+
+-   x = 5
+
+-   Then you plug x into an equation.
+
+In R:
+
+```{r}
+x <- 5
+y <- x + 3
+print(y)
+```
+
+To make functions...
+
+In algebra:
+
+-   f(x) = x\^2 + 1
+
+-   Plug in x = 3" + 1
+
+-   f(x) = (3)\^2 + 1 = 10
+
+In R:
+
+```{r}
+squareANumberAddOne <- function(x) { x^2 + 1 }
+squareANumberAddOne(4)  # 16
+```
+
+# Pre-data
+
+Install and load packages.
+
+```{r}
+# Install pkgs
+install.packages(c("tidyverse", # general data wrangling and viz
+                   "vegan", # ecological stats
+                   "rstatix",
+                   "DESeq2")) # tidy stats
+
+# Load pkgs
+library("tidyverse",
+        "vegan",
+        "rstatix",
+        "DESeq2")
+
+pacman::p_load("tidyverse",
+               "vegan",
+               "rstatix",
+               "DESeq2")
+```
+
+Why load?
+
+-   Base R is like a basic calculator
+
+-   Packages are tools (ready-made functions) you plug in to R
+
+# Data wrangling
+
+Import data
+
+```{r}
+metadata <- 
+  read_csv("Microbiome - 2025 - Metadata.csv")
+
+ASVtable <- 
+  read_csv("Microbiome - 2025 - Annotated ASVs.csv")
+```
+
+Clean ASV table.
+
+```{r}
+ASVtable_1 <- 
+  ASVtable |> # This is a piping operator
+  mutate(Chloroplast = if_else(str_detect(Taxon, "chloroplast"), "Yes", "No"))
+```
+
+Filter out shallowly annotated sequences.
+
+```{r}
+ASVtable_1 <- 
+  ASVtable |> 
+  filter(DomainBactOnly == "No")
+```
+
+Remove sequences annotated as chloroplast.
+
+```{r}
+ASVtable_2 <- 
+  ASVtable_1 |> 
+  mutate(Chloroplast = if_else(str_detect(Taxon, "chloroplast"), "Yes", "No"))
+```
+
+# Barplots
+
+Make data tidy.
+
+```{r}
+AsVtable_3 <- 
+  ASVtable_2 |> 
+  pivot_longer(cols = c(2:9),
+               names_to = "SampleID",
+               values_to = "Count")
+```
+
+Plot dataset based on class. See overview of data.
+
+```{r}
+OverviewClass <- 
+  AsVtable_3 |> 
+  group_by(Class) |> 
+  summarise(TotalCounts = sum(Count)) |> 
+  arrange(desc(TotalCounts)) |> 
+  ungroup() |> 
+  mutate(Rank = 1:n()) |> 
+  mutate(Class = if_else(Rank < 10, Class, "Others")) |> 
+  group_by(Class) |> 
+  summarise(TotalCounts = sum(TotalCounts))
+
+OverviewClassTop <- 
+  OverviewClass |> 
+  pull(Class)
+```
+
+Plot.
+
+```{r}
+ASVtable_bar <- 
+  AsVtable_3 |> 
+  mutate(Class = if_else(Class %in% OverviewClassTop,
+                         Class,
+                         "Others")) |> 
+  ggplot(aes(x = SampleID,
+             y = Count,
+             fill = Class)) +
+  geom_bar(stat = "identity",
+           position = "fill") +
+  scale_fill_brewer(palette = "Spectral") +
+  theme_classic()
+```
+
+# Composition
+
+Make a Bray-Curtis dissimilarity matrix.
+
+```{r}
+BC <- 
+  AsVtable_3 |> 
+  select(`Feature ID`,
+         Count,
+         SampleID) |> 
+  pivot_wider(names_from = `Feature ID`,
+              values_from = Count) |> 
+  column_to_rownames("SampleID") |> 
+  as.matrix()
+```
+
+Compute Bray-Curtis dissimilarity.
+
+```{r}
+BC1 <- 
+  BC |> 
+  vegan::vegdist(method = "bray")
+```
+
+Do PCoA.
+
+```{r}
+pcoa <- 
+  BC1 |> 
+  cmdscale(k = 2, eig = TRUE)
+```
+
+Plot.
+
+```{r}
+pcoa_scores <- as.data.frame(pcoa$points)
+pcoa_df <- 
+  pcoa_scores |> rownames_to_column("SampleID") |> 
+  left_join(metadata)
+
+pcoa_plot <- 
+  ggplot(pcoa_df, aes(x = V1, 
+                      y = V2, 
+                      color = Thermotolerance)) +
+  geom_point(size = 2) +
+  labs(x = paste0("PCoA1 (", round(pcoa$eig[1] / sum(pcoa$eig) * 100, 1), "%)"),
+       y = paste0("PCoA2 (", round(pcoa$eig[2] / sum(pcoa$eig) * 100, 1), "%)")) +
+  stat_ellipse() +
+  theme_classic()
+```
+
+## PERMANOVA
+
+Check stats support.
+
+```{r}
+adonis_res <- 
+   vegan::adonis2(BC1 ~ Thermotolerance, data = metadata, permutations = 999)
+```
+
+Stats show that they are different compositionally (i.e., thermotolerants and thermosensitives have different microbiomes).
+
+# Diversity
+
+Alpha diversity analysis.
+
+```{r}
+Alpha <- 
+  AsVtable_3 |> 
+  group_by(SampleID) |> 
+  summarize(Shannon = vegan::diversity(Count, index = "shannon"),
+            Simpson = vegan::diversity(Count, index = "simpson"),
+            Richness = vegan::specnumber(Count))
+```
+
+Plot.
+
+```{r}
+AlphaPlot <- 
+  Alpha |> 
+  left_join(metadata) |> 
+  pivot_longer(cols = c(2:4),
+               names_to = "AlphaMetric",
+               values_to = "AlphaMeasure") |> 
+  ggplot(aes(x = Thermotolerance,
+             y = AlphaMeasure)) + 
+  facet_wrap(~AlphaMetric,
+             scales = "free") +
+  geom_boxplot() +
+  theme_bw()
+```
+
+Stats.
+
+```{r}
+kw_res <- 
+  Alpha |> 
+  left_join(metadata) |> 
+  pivot_longer(cols = c(2:4),
+               names_to = "AlphaMetric",
+               values_to = "AlphaMeasure") |> 
+  group_by(AlphaMetric) |> 
+  rstatix::kruskal_test(AlphaMeasure ~ Thermotolerance)
+```
+
+# Differential abundance
+
+Make data DESeq2-readable.
+
+Prep ASV table.
+
+```{r}
+DESeqASV <- 
+  ASVtable_2 |> 
+  select(1:9) |> 
+  column_to_rownames("Feature ID")
+
+DESeqMeta <- 
+  metadata |> 
+  column_to_rownames("SampleID")
+
+dds <- 
+  DESeq2::DESeqDataSetFromMatrix(
+  countData = DESeqASV,
+  colData = DESeqMeta,
+  design = ~ Thermotolerance# replace with your variable of interest
+)
+```
+
+Pre-filter low-abundance ASVs.
+
+```{r}
+dds <- dds[rowSums(DESeq2::counts(dds)) > 10, ] # keep ASVs with >10 total counts
+```
+
+Run DESeq2
+
+```{r}
+dds <- DESeq2::DESeq(dds)
+```
+
+Get results.
+
+```{r}
+res <- DESeq2::results(dds, contrast = c("Thermotolerance", "Tolerant", "Sensitive"))
+```
+
+Tidy results.
+
+```{r}
+res_tbl <- 
+  res |> 
+  as_tibble(rownames = "Feature ID") |> 
+  mutate(Group = case_when(padj < 0.001 & log2FoldChange >= 2 ~ "Up",
+                           padj < 0.001 & log2FoldChange <= -2 ~ "Down",
+                           .default = "Insiginificant"))
+```
+
+Plot.
+
+```{r}
+res_plot <- 
+  res_tbl %>%
+  ggplot(aes(x = log2FoldChange,
+             y = -log10(padj),
+             color = Group)) +
+  geom_point(alpha = 0.5) +
+  theme_classic()
+```
+
+View data.
+
+```{r}
+res_tbl1 <- 
+  res_tbl |> 
+  filter(padj < 0.001, log2FoldChange >= 2 | log2FoldChange <= -2)
+```
+
+Plot.
+
+```{r}
+res_plot1 <- 
+  res_tbl1 |> 
+  ggplot(aes(x = fct_reorder(`Feature ID`, log2FoldChange),
+             y = log2FoldChange, 
+             fill = log2FoldChange > 0)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  labs(x = "ASV",
+       y = "Log2 Fold Change") +
+  scale_fill_manual(values = c("TRUE" = "firebrick", "FALSE" = "royalblue"), guide = FALSE) +
+  theme_minimal()
+
+res_plot2 <- 
+  res_tbl1 |> 
+  left_join((ASVtable_2 |> select(1,10))) |> 
+  ggplot(aes(x = fct_reorder(Taxon, log2FoldChange),
+             y = log2FoldChange, 
+             fill = log2FoldChange > 0)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  labs(x = "ASV",
+       y = "Log2 Fold Change") +
+  scale_fill_manual(values = c("TRUE" = "firebrick", "FALSE" = "royalblue"), guide = FALSE) +
+  theme_minimal()
+```
